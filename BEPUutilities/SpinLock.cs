@@ -14,12 +14,18 @@ namespace BEPUutilities
         private const int SleepInterval = 10;
         private int owner = -1;
 
+        private ManualResetEvent sleepResetEvent = new ManualResetEvent(false);
+        private System.Threading.SpinLock spinLock = new System.Threading.SpinLock();
 
         /// <summary>
         /// Enters the critical section.  A thread cannot attempt to enter the spinlock if it already owns the spinlock.
         /// </summary>
         public void Enter()
         {
+            bool taken = false;
+            spinLock.Enter(ref taken);
+            return;
+
             int count = 0;
             while (Interlocked.CompareExchange(ref owner, 0, -1) != -1)
             {
@@ -35,6 +41,10 @@ namespace BEPUutilities
         /// </summary>
         public bool TryEnter()
         {
+            bool taken = false;
+            spinLock.TryEnter(ref taken);
+            return taken;
+
             return Interlocked.CompareExchange(ref owner, 0, -1) == -1;
         }
 
@@ -44,6 +54,9 @@ namespace BEPUutilities
         /// </summary>
         public void Exit()
         {
+            spinLock.Exit();
+            return;
+
             //To be safe, technically should check the identity of the exiter.
             //But since this is a very low-level, restricted access class,
             //assume that enter has to succeed before exit is tried.
@@ -54,19 +67,12 @@ namespace BEPUutilities
         {
             if (attempt == SleepInterval)
             {
-#if WINDOWS
-                Thread.Yield();
-#else
-                Thread.Sleep(0);
-#endif
-                //TODO: Thread.Yield on windows?
-                //Check multithreaded bookmarks performance conscious
-                //and .netspinlock
+                sleepResetEvent.WaitOne(0);
                 attempt -= SleepInterval;
             }
             else
             {
-                Thread.SpinWait(Math.Min(3 << attempt, MaximumSpinWait));
+                sleepResetEvent.WaitOne(Math.Min(3 << attempt, MaximumSpinWait));
             }
         }
     }
